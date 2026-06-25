@@ -13,9 +13,9 @@ namespace TS3Mod.Core
     {
         public static BepInEx.Logging.ManualLogSource SharedLogger;
 
-        internal static string RuntimeLogDir;
-        internal static string MirrorLogDirPrimary;
-        internal static string MirrorLogDirFallback;
+        public static string RuntimeLogDir;
+        public static string MirrorLogDirPrimary;
+        public static string MirrorLogDirFallback;
 
         private Harmony _harmony;
 
