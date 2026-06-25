@@ -1,3 +1,6 @@
 <Solution>
-  <Project Path="TS3Mod/TS3Mod.csproj" Id="05f05df8-1225-49dd-8c62-7fb5985f91de" />
+  <Project Path="TS3Mod.AI/TS3Mod.AI.csproj" Id="270882dc-387e-4ffe-b839-e6fd8273004f" />
+  <Project Path="TS3Mod.MemoryPatch/TS3Mod.MemoryPatch.csproj" Id="f9d0db73-de8e-4c58-aa52-476f956106f6" />
+  <Project Path="TS3Mod.Networking/TS3Mod.Networking.csproj" Id="f877b488-5e6c-43cc-9574-369353e8999c" />
+  <Project Path="TS3Mod/TS3Mod.Core.csproj" Id="05f05df8-1225-49dd-8c62-7fb5985f91de" />
 </Solution>
