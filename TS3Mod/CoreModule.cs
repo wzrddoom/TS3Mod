@@ -8,14 +8,18 @@ using UnityEngine;
 
 namespace TS3Mod.Core
 {
-    [BepInPlugin("com.wzrddoom.ts3.performance", "TS3 Engine Optimiser", "3.1.2")]
-    public class TS3Plugin : BaseUnityPlugin
+    // NEW: A standalone public class to safely hold variables without needing BepInEx references
+    public static class ModState
     {
-        public static BepInEx.Logging.ManualLogSource SharedLogger;
-
         public static string RuntimeLogDir;
         public static string MirrorLogDirPrimary;
         public static string MirrorLogDirFallback;
+    }
+
+    [BepInPlugin("com.lions.ts3.performance", "TS3 Engine Optimiser", "3.1.2")]
+    public class TS3Plugin : BaseUnityPlugin
+    {
+        public static BepInEx.Logging.ManualLogSource SharedLogger;
 
         private Harmony _harmony;
 
@@ -26,58 +30,83 @@ namespace TS3Mod.Core
 
             try
             {
-                RuntimeLogDir = Path.Combine(Application.temporaryCachePath, "TS3ModLogs");
-                Directory.CreateDirectory(RuntimeLogDir);
-                Log.I("[TS3Mod] Runtime log dir: " + RuntimeLogDir);
+                ModState.RuntimeLogDir = Path.Combine(Application.temporaryCachePath, "TS3ModLogs");
+                Directory.CreateDirectory(ModState.RuntimeLogDir);
+                Log.I("[TS3Mod] Runtime log dir: " + ModState.RuntimeLogDir);
             }
             catch (Exception ex)
             {
                 Log.E("[TS3Mod] Runtime log dir failed: " + ex.Message);
-                RuntimeLogDir = Application.temporaryCachePath;
+                ModState.RuntimeLogDir = Application.temporaryCachePath;
             }
 
             try
             {
                 string gameRoot = Paths.GameRootPath;
-                MirrorLogDirPrimary = Path.Combine(gameRoot, "BepInEx", "plugins", "TS3ModLogs");
-                Directory.CreateDirectory(MirrorLogDirPrimary);
-                Log.I("[TS3Mod] Mirror primary: " + MirrorLogDirPrimary);
+                ModState.MirrorLogDirPrimary = Path.Combine(gameRoot, "BepInEx", "plugins", "TS3ModLogs");
+                Directory.CreateDirectory(ModState.MirrorLogDirPrimary);
+                Log.I("[TS3Mod] Mirror primary: " + ModState.MirrorLogDirPrimary);
             }
             catch (Exception ex)
             {
                 Log.W("[TS3Mod] Mirror primary unavailable: " + ex.Message);
-                MirrorLogDirPrimary = null;
+                ModState.MirrorLogDirPrimary = null;
             }
 
             try
             {
-                MirrorLogDirFallback = Path.Combine(Path.GetTempPath(), "TS3ModLogs");
-                Directory.CreateDirectory(MirrorLogDirFallback);
-                Log.I("[TS3Mod] Mirror fallback: " + MirrorLogDirFallback);
+                ModState.MirrorLogDirFallback = Path.Combine(Path.GetTempPath(), "TS3ModLogs");
+                Directory.CreateDirectory(ModState.MirrorLogDirFallback);
+                Log.I("[TS3Mod] Mirror fallback: " + ModState.MirrorLogDirFallback);
             }
             catch (Exception ex)
             {
                 Log.W("[TS3Mod] Mirror fallback unavailable: " + ex.Message);
-                MirrorLogDirFallback = null;
+                ModState.MirrorLogDirFallback = null;
             }
 
             _harmony = new Harmony("com.lions.ts3.performance.harmony");
 
             try
             {
-                // In a compiled multi-project solution, you can scan all loaded assemblies 
-                // that belong to your mod by matching their namespace or prefix.
-                // For simplicity, we patch the current AppDomain assemblies that start with TS3Mod.
+                // CRITICAL FIX: Force search in the actual BepInEx plugins folder.
+                // Assembly.Location points to an empty temporary cache folder!
+                string pluginDir = Paths.PluginPath;
+
+                string[] modularDlls = Directory.GetFiles(pluginDir, "TS3Mod*.dll", SearchOption.AllDirectories);
+                foreach (string dll in modularDlls)
+                {
+                    try
+                    {
+                        string asmName = Path.GetFileNameWithoutExtension(dll);
+                        bool loaded = false;
+
+                        // Check if it's already in the AppDomain to prevent crashes
+                        foreach (var existing in AppDomain.CurrentDomain.GetAssemblies())
+                        {
+                            if (existing.GetName().Name == asmName) { loaded = true; break; }
+                        }
+
+                        if (!loaded)
+                        {
+                            Assembly.LoadFrom(dll);
+                            Log.I($"[TS3Mod] Force-loaded modular assembly: {asmName}");
+                        }
+                    }
+                    catch (Exception ex) { Log.W($"[TS3Mod] Could not load {Path.GetFileName(dll)}: {ex.Message}"); }
+                }
+
                 var assemblies = AppDomain.CurrentDomain.GetAssemblies();
                 foreach (var asm in assemblies)
                 {
                     if (asm.GetName().Name.StartsWith("TS3Mod"))
                     {
-                        foreach (var t in asm.GetTypes())
+                        try
                         {
-                            try { _harmony.CreateClassProcessor(t).Patch(); }
-                            catch (Exception exType) { Log.W("[TS3Mod] Patch skip for " + t.FullName + ": " + exType.Message); }
+                            _harmony.PatchAll(asm);
+                            Log.I($"[TS3Mod] Applied patches for: {asm.GetName().Name}");
                         }
+                        catch (Exception exType) { Log.W($"[TS3Mod] Patch skip for assembly {asm.GetName().Name}: {exType.Message}"); }
                     }
                 }
             }
@@ -98,9 +127,9 @@ namespace TS3Mod.Core
             {
                 try
                 {
-                    if (Directory.Exists(RuntimeLogDir))
+                    if (Directory.Exists(ModState.RuntimeLogDir))
                     {
-                        string[] files = Directory.GetFiles(RuntimeLogDir, "*.log", SearchOption.TopDirectoryOnly);
+                        string[] files = Directory.GetFiles(ModState.RuntimeLogDir, "*.log", SearchOption.TopDirectoryOnly);
                         for (int i = 0; i < files.Length; i++)
                         {
                             SafeMirror(files[i]);
@@ -127,22 +156,22 @@ namespace TS3Mod.Core
                 if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath)) return;
                 string name = Path.GetFileName(sourcePath);
 
-                if (!string.IsNullOrWhiteSpace(MirrorLogDirFallback))
+                if (!string.IsNullOrWhiteSpace(ModState.MirrorLogDirFallback))
                 {
                     try
                     {
-                        Directory.CreateDirectory(MirrorLogDirFallback);
-                        File.Copy(sourcePath, Path.Combine(MirrorLogDirFallback, name), true);
+                        Directory.CreateDirectory(ModState.MirrorLogDirFallback);
+                        File.Copy(sourcePath, Path.Combine(ModState.MirrorLogDirFallback, name), true);
                     }
                     catch { }
                 }
 
-                if (!string.IsNullOrWhiteSpace(MirrorLogDirPrimary))
+                if (!string.IsNullOrWhiteSpace(ModState.MirrorLogDirPrimary))
                 {
                     try
                     {
-                        Directory.CreateDirectory(MirrorLogDirPrimary);
-                        File.Copy(sourcePath, Path.Combine(MirrorLogDirPrimary, name), true);
+                        Directory.CreateDirectory(ModState.MirrorLogDirPrimary);
+                        File.Copy(sourcePath, Path.Combine(ModState.MirrorLogDirPrimary, name), true);
                     }
                     catch { }
                 }

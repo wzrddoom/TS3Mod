@@ -50,9 +50,7 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="..\TS3Mod\AI_CUDA_Integration.cs">
-      <Link>AI_CUDA_Integration.cs</Link>
-    </Compile>
+    <Compile Include="AI_CUDA_Integration.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>

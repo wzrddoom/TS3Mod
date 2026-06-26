@@ -197,38 +197,14 @@ finally:
             string module = Path.GetFileNameWithoutExtension(startInfo.FileName).ToLowerInvariant();
             Log.I("Intercept module=" + module);
 
-            string python = FindPython(startInfo);
-            if (string.IsNullOrEmpty(python))
-            {
-                Log.E("[TS3Mod] python.exe not found! Native bypass aborted.");
-                return;
-            }
-
-            string extractDir, pycPath;
-            if (!TryResolveExtractedLayout(startInfo.FileName, module, out extractDir, out pycPath))
-            {
-                Log.E("[TS3Mod] Could not resolve extracted layout for " + module + ". Bypass aborted.");
-                return;
-            }
-
             if (startInfo.UseShellExecute)
             {
                 startInfo.UseShellExecute = false;
                 startInfo.CreateNoWindow = true;
             }
 
-            string tempDir = UnityEngine.Application.temporaryCachePath;
-            string launcherPath = Path.Combine(tempDir, module + "_launcher.py");
-            string stderrLog = Path.Combine(TS3Plugin.RuntimeLogDir, module + ".stderr.log");
-            string stdoutLog = Path.Combine(TS3Plugin.RuntimeLogDir, module + ".stdout.log");
-            string crashLog = Path.Combine(TS3Plugin.RuntimeLogDir, module + ".crash.log");
-            string preflightLog = Path.Combine(TS3Plugin.RuntimeLogDir, module + ".preflight.log");
-
-            try { File.WriteAllText(launcherPath, LauncherScript, Encoding.UTF8); }
-            catch (Exception ex) { Log.E("[TS3Mod] Failed to write script: " + ex.Message); return; }
-
-            SafeDelete(stderrLog); SafeDelete(stdoutLog); SafeDelete(crashLog); SafeDelete(preflightLog);
-
+            // 1. Apply environment variables and CUDA PATHs immediately.
+            // This ensures the vanilla executable can access the GPU even if the Python bypass fails.
             startInfo.EnvironmentVariables["PYTHONUNBUFFERED"] = "1";
             startInfo.EnvironmentVariables["PYTHONUTF8"] = "1";
             startInfo.EnvironmentVariables["RM_NO_PHRASE_CAP"] = "1";
@@ -246,6 +222,22 @@ finally:
                 startInfo.EnvironmentVariables["WHISPER_DEVICE"] = "cuda";
                 startInfo.EnvironmentVariables["FASTER_WHISPER_DEVICE"] = "cuda";
                 startInfo.EnvironmentVariables["CT2_CUDA_ALLOW_FP16"] = "1";
+
+                string py = FindPython(startInfo);
+                if (!string.IsNullOrEmpty(py))
+                {
+                    string sitePkgs = Path.Combine(Path.GetDirectoryName(py), "Lib", "site-packages");
+                    if (Directory.Exists(sitePkgs))
+                    {
+                        string cudnnBin = Path.Combine(sitePkgs, "nvidia", "cudnn", "bin");
+                        string torchLib = Path.Combine(sitePkgs, "torch", "lib");
+                        string existingPath = startInfo.EnvironmentVariables["PATH"] ?? Environment.GetEnvironmentVariable("PATH");
+
+                        string newPath = $"{cudnnBin};{torchLib};{existingPath}";
+                        startInfo.EnvironmentVariables["PATH"] = newPath;
+                        Log.I($"[TS3Mod] Injected Python CUDA PATHs for vanilla fallback: {newPath.Substring(0, Math.Min(newPath.Length, 100))}...");
+                    }
+                }
                 AddCudaPaths(startInfo);
             }
 
@@ -257,11 +249,53 @@ finally:
                 {
                     try { PatchRecogConfigFile(cfgPath); } catch { }
                 }
+                else
+                {
+                    // Fallback: Inject GPU arguments directly into the command line
+                    // This is essential if the vanilla .exe is used and no --config is present
+                    string lower = args.ToLowerInvariant();
+                    if (!lower.Contains("--config"))
+                    {
+                        if (!lower.Contains("--device")) args += " --device cuda";
+                        if (!lower.Contains("--compute_type")) args += " --compute_type float16";
+                        if (!lower.Contains("--cpu_threads")) args += " --cpu_threads 4";
+                        startInfo.Arguments = args.Trim();
+                        Log.I("[TS3Mod] RECOG args injected directly into CLI for vanilla fallback: " + startInfo.Arguments);
+                    }
+                }
             }
 
+            // 2. Attempt the native Python bypass.
+            string python = FindPython(startInfo);
+            if (string.IsNullOrEmpty(python))
+            {
+                Log.W("[TS3Mod] python.exe not found! Running vanilla " + module + ".exe with injected GPU PATH.");
+                return;
+            }
+
+            string extractDir, pycPath;
+            if (!TryResolveExtractedLayout(startInfo.FileName, module, out extractDir, out pycPath))
+            {
+                Log.W("[TS3Mod] Extracted layout not found for " + module + ". Running vanilla .exe with injected GPU PATH.");
+                return;
+            }
+
+            string tempDir = UnityEngine.Application.temporaryCachePath;
+            string launcherPath = Path.Combine(tempDir, module + "_launcher.py");
+
+            string stderrLog = Path.Combine(ModState.RuntimeLogDir, module + ".stderr.log");
+            string stdoutLog = Path.Combine(ModState.RuntimeLogDir, module + ".stdout.log");
+            string crashLog = Path.Combine(ModState.RuntimeLogDir, module + ".crash.log");
+            string preflightLog = Path.Combine(ModState.RuntimeLogDir, module + ".preflight.log");
+
+            try { File.WriteAllText(launcherPath, LauncherScript, Encoding.UTF8); }
+            catch (Exception ex) { Log.E("[TS3Mod] Failed to write script: " + ex.Message); return; }
+
+            SafeDelete(stderrLog); SafeDelete(stdoutLog); SafeDelete(crashLog); SafeDelete(preflightLog);
+
             string origArgs = startInfo.Arguments ?? string.Empty;
-            string mirrorA = TS3Plugin.MirrorLogDirPrimary ?? "";
-            string mirrorB = TS3Plugin.MirrorLogDirFallback ?? "";
+            string mirrorA = ModState.MirrorLogDirPrimary ?? "";
+            string mirrorB = ModState.MirrorLogDirFallback ?? "";
 
             startInfo.FileName = python;
             startInfo.Arguments = $"-u \"{launcherPath}\" \"{module}\" \"{extractDir}\" \"{pycPath}\" \"{stderrLog}\" \"{stdoutLog}\" \"{crashLog}\" \"{preflightLog}\" {(forceCpu ? "1" : "0")} {(preferGpu ? "1" : "0")} \"{mirrorA}\" \"{mirrorB}\" {origArgs}".Trim();
