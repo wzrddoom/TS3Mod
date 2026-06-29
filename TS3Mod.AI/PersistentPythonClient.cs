@@ -4,7 +4,6 @@ using System.IO;
 using System.Net;
 using System.Reflection;
 using System.Text;
-using System.Net;
 using System.Threading;
 
 namespace TS3Mod.AI

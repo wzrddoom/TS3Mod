@@ -16,7 +16,7 @@ namespace TS3Mod.Core
         public static string MirrorLogDirFallback;
     }
 
-    [BepInPlugin("com.lions.ts3.performance", "TS3 Engine Optimiser", "3.1.2")]
+    [BepInPlugin("com.wzrddoom.ts3.performance", "TS3 Voice Recognition Optimiser", "4.0.1")]
     public class TS3Plugin : BaseUnityPlugin
     {
         public static BepInEx.Logging.ManualLogSource SharedLogger;
